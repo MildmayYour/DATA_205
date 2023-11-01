@@ -1,0 +1,328 @@
+---
+title: "FinalProject Data 205"
+author: "Miriam Schoenbaum"
+date: "`r Sys.Date()`"
+output: openintro::lab_report
+---
+
+# Load packages
+
+```{r load-packages, message=FALSE}
+library(tidyverse)
+library(data.table)
+library(naniar)
+library(lubridate)
+library(chron)
+library(generalhoslem)
+library(performance)
+```
+
+# Check timezone
+
+```{r}
+Sys.timezone()
+```
+
+# Load data
+
+```{r}
+# Data Montgomery
+nonmotorist <- fread('https://data.montgomerycountymd.gov/resource/n7fk-dce5.csv?$limit=10000')
+incident <- fread('https://data.montgomerycountymd.gov/resource/bhju-22kf.csv?$limit=150000')
+```
+
+```{r}
+# Maryland State Police
+setwd("C:/Data_205/project_files")
+MSP <- read.csv('CrashMap_NONMOTORIST_data.csv')
+```
+
+# Wrangle the MSP data
+
+```{r}
+# Change non-motorist sex from character to factor
+MSP$NonMotoristSex <- as.factor(MSP$NonMotoristSex)
+# Change non-motorist date of birth from character to date
+MSP$NonMotoristDOB <- as.Date(MSP$NonMotoristDOB,"%m/%d/%Y")
+# Change small letters in NonmotoristID to capital letters
+MSP$NonMotoristID <- toupper(MSP$NonMotoristID)
+```
+
+# Wrangle the nonmotorist data
+
+```{r}
+# Change a lot of variables from character to factor and order factors as needed
+nonmotorist$agency_name <- as.factor(nonmotorist$agency_name)
+nonmotorist$acrs_report_type <- as.factor(nonmotorist$acrs_report_type)
+nonmotorist$route_type <- as.factor(nonmotorist$route_type)
+nonmotorist$cross_street_type <- as.factor(nonmotorist$cross_street_type)
+nonmotorist$municipality <- as.factor(nonmotorist$municipality)
+nonmotorist$related_non_motorist <- as.factor(nonmotorist$related_non_motorist)
+nonmotorist$collision_type <- as.factor(nonmotorist$collision_type)
+nonmotorist$weather <- as.factor(nonmotorist$weather)
+nonmotorist$surface_condition <- as.factor(nonmotorist$surface_condition)
+nonmotorist$light <- as.factor(nonmotorist$light)
+nonmotorist$traffic_control <- as.factor(nonmotorist$traffic_control)
+nonmotorist$pedestrian_type <- as.factor(nonmotorist$pedestrian_type)
+nonmotorist$pedestrian_movement <- as.factor(nonmotorist$pedestrian_movement)
+nonmotorist$pedestrian_actions <- as.factor(nonmotorist$pedestrian_actions)
+nonmotorist$pedestrian_location <- as.factor(nonmotorist$pedestrian_location)
+nonmotorist$pedestrian_obeyed_traffic_signal <- as.factor(nonmotorist$pedestrian_obeyed_traffic_signal)
+nonmotorist$pedestrian_visibility <- as.factor(nonmotorist$pedestrian_visibility)
+nonmotorist$at_fault <- as.factor(nonmotorist$at_fault)
+nonmotorist$injury_severity <- as.factor(nonmotorist$injury_severity)
+nonmotorist$injury_severity <- factor(nonmotorist$injury_severity, ordered = TRUE, levels = c("NO APPARENT INJURY", "POSSIBLE INJURY", "SUSPECTED MINOR INJURY", "SUSPECTED SERIOUS INJURY", "FATAL INJURY"))
+# Create date variable for calculating age
+nonmotorist <- nonmotorist |>
+  mutate(crashdate = as.Date(nonmotorist$crash_date_time,"%m/%d/%Y", tz = ''))
+# Create year variable
+nonmotorist <- nonmotorist |>
+  mutate(year = as.numeric((format(nonmotorist$crashdate,"%Y"))))
+# Create on/off road variable
+nonmotorist <- nonmotorist |>
+  replace_with_na(replace = list(off_road_description = "")) |>
+  mutate(on_offroad = if_else(is.na(off_road_description), "On road", "Off road"))
+nonmotorist$on_offroad <- as.factor(nonmotorist$on_offroad)
+# Create serious/fatal injury variable
+nonmotorist <- nonmotorist |>
+  mutate(serious_fatal_injury = case_when(
+    injury_severity == "FATAL INJURY" ~ "serious/fatal",
+    injury_severity == "SUSPECTED SERIOUS INJURY" ~ "serious/fatal",
+    .default = "not serious/fatal"
+  ))
+nonmotorist$serious_fatal_injury <- as.factor(nonmotorist$serious_fatal_injury)
+# Create a day/night variable (day = 6 am to 8 pm, night = 8 pm to 6 am)
+nonmotorist <- nonmotorist |>
+  mutate(crashtime = format(as.POSIXct(crash_date_time),format = "%H:%M:%S"))
+nonmotorist$crashtime <- times(nonmotorist$crashtime)
+nonmotorist <- nonmotorist |>
+  mutate(day_night = case_when(
+    crashtime >= "06:00:00" & crashtime < "20:00:00" ~ "day",
+    .default = "night"
+  ))
+nonmotorist$day_night <- as.factor(nonmotorist$day_night)
+# Create month variable and seasonality variable
+nonmotorist <- nonmotorist |>
+  mutate(month = month(crash_date_time))
+nonmotorist <- nonmotorist |> 
+  mutate(season = case_when (
+    month == "12" | month == "1" | month == "2" ~ "winter",
+    month == "3" | month == "4" | month == "5" ~ "spring",
+    month == "6" | month == "7" | month == "8" ~ "summer",
+    .default = "fall"
+  ))
+nonmotorist$season <- factor(nonmotorist$season, ordered = TRUE, levels = c("winter", "spring", "summer", "fall"))
+# Create "dart dash" variable
+nonmotorist <- nonmotorist |>
+  mutate(dartdash = if_else(pedestrian_actions == "DART DASH", "dart dash", "not dart dash"))
+nonmotorist$dartdash <- as.factor(nonmotorist$dartdash)
+# Create pedestrian/non-pedestrian variable
+nonmotorist <- nonmotorist |>
+  mutate(pedestrian_yes_no = ifelse(pedestrian_type == "PEDESTRIAN", "pedestrian", "small wheeled thing"))
+nonmotorist$pedestrian_yes_no <- as.factor(nonmotorist$pedestrian_yes_no)
+```
+
+# Wrangle the incident data
+
+```{r}
+# Change chosen variables from character to factor
+incident$hit_run <- as.factor(incident$hit_run)
+incident$nontraffic <- as.factor(incident$nontraffic)
+incident$junction <- as.factor(incident$junction)
+```
+
+# Start the main data table by adding the incident fields to the non-motorist table
+
+```{r}
+# Join tables
+datatable <- left_join(nonmotorist, incident, by = join_by(report_number == report_number), relationship = "many-to-one")
+# drop duplicate variables
+datatable <- datatable |>
+  select(-ends_with(".y")) 
+```
+
+# Add the MSP fields to the main data table
+
+```{r}
+datatable <- left_join(datatable, MSP, by = join_by(person_id == NonMotoristID))
+```
+
+# Drop 2015, 2016, 2017 from the main data table
+
+```{r}
+datatable <- subset(datatable, year > 2017)
+```
+
+# Create age field
+
+```{r}
+datatable <- datatable |>
+  mutate(age = (crashdate - NonMotoristDOB)/365)
+datatable$age <- as.integer(datatable$age)
+```
+
+# Create 2 age category fields
+
+```{r}
+# Create binary age variable
+datatable <- datatable |>
+  mutate(adult_yes_no = if_else((age < 19), "Not adult", "Adult"))
+datatable$adult_yes_no <- as.factor(datatable$adult_yes_no)
+# Create age group field
+datatable <- datatable |>
+  mutate(agegroup = case_when(
+    age >= 0 & age < 5 ~ "0-4",
+    age >= 5 & age <12 ~ "5-11",
+    age >= 12 & age <15 ~ "12-14",
+    age >= 15 & age <19 ~ "15-18",
+    .default = "19+"
+  ))
+datatable$agegroup <- as.factor(datatable$agegroup)
+datatable$agegroup <- factor(datatable$agegroup, ordered = TRUE, levels = c("0-4", "5-11", "12-14", "15-18", "19+"))
+```
+
+# Look at age group and adult/non-adult
+
+```{r}
+table(datatable$agegroup)
+table(datatable$adult_yes_no)
+```
+
+# Two-variable tables
+# Time
+
+```{r}
+table(datatable$year, datatable$agegroup)
+table(datatable$year, datatable$adult_yes_no)
+table(datatable$month, datatable$agegroup)
+table(datatable$month, datatable$adult_yes_no)
+table(datatable$season, datatable$agegroup)
+table(datatable$season, datatable$adult_yes_no)
+table(datatable$day_night, datatable$agegroup)
+table(datatable$day_night, datatable$adult_yes_no)
+```
+
+# Roads
+
+```{r}
+table(datatable$on_offroad, datatable$agegroup)
+table(datatable$on_offroad, datatable$adult_yes_no)
+table(datatable$number_of_lanes, datatable$agegroup)
+table(datatable$number_of_lanes, datatable$adult_yes_no)
+```
+
+# Crashes
+
+```{r}
+table(datatable$serious_fatal_injury, datatable$agegroup)
+table(datatable$serious_fatal_injury, datatable$adult_yes_no)
+table(datatable$at_fault.x, datatable$agegroup)
+table(datatable$at_fault.x, datatable$adult_yes_no)
+table(datatable$dartdash, datatable$agegroup)
+table(datatable$dartdash, datatable$adult_yes_no)
+table(datatable$agency_name.x, datatable$agegroup)
+table(datatable$agency_name.x, datatable$adult_yes_no)
+table(datatable$agency_name.x, datatable$at_fault.x)
+table(datatable$hit_run, datatable$agegroup)
+table(datatable$hit_run, datatable$adult_yes_no)
+```
+
+# Transportation mode
+
+```{r}
+table(datatable$pedestrian_type, datatable$agegroup)
+table(datatable$pedestrian_type, datatable$adult_yes_no)
+table(datatable$pedestrian_yes_no, datatable$agegroup)
+table(datatable$pedestrian_yes_no, datatable$adult_yes_no)
+```
+
+
+# Chi squared tests
+
+```{r}
+# Time
+# Year - adult yes/no
+chisq.test(datatable$year, datatable$adult_yes_no)
+# Month - adult yes/no
+chisq.test(datatable$month, datatable$adult_yes_no)
+# Season - adult yes/no
+chisq.test(datatable$season, datatable$adult_yes_no)
+# Day/night - adult yes/no
+chisq.test(datatable$day_night, datatable$adult_yes_no)
+# Road
+# On or off road - adult yes/no
+chisq.test(datatable$on_offroad, datatable$adult_yes_no)
+# Crash
+# Serious or fatal
+chisq.test(datatable$serious_fatal_injury, datatable$adult_yes_no)
+# At fault
+chisq.test(datatable$at_fault.x, datatable$adult_yes_no)
+# Dart dash
+chisq.test(datatable$dartdash, datatable$adult_yes_no)
+# Mode
+chisq.test(datatable$pedestrian_yes_no, datatable$adult_yes_no)
+```
+
+# Logistic regression model for non-motorist at fault
+
+```{r}
+# Create binary at-fault variable
+datatable <- datatable |>
+  mutate(at_fault.binary = ifelse(at_fault.x == "No", "Not at fault", "At fault or unknown"))
+datatable$at_fault.binary <- as.factor(datatable$at_fault.binary)
+# Look at the variables separately for collinearity
+table(datatable$at_fault.binary, datatable$day_night)
+chisq.test(datatable$at_fault.binary, datatable$day_night)
+table(datatable$at_fault.binary, datatable$on_offroad)
+chisq.test(datatable$at_fault.binary, datatable$on_offroad)
+table(datatable$at_fault.binary,datatable$pedestrian_yes_no)
+chisq.test(datatable$at_fault.binary,datatable$pedestrian_yes_no)
+table(datatable$at_fault.binary, datatable$adult_yes_no)
+chisq.test(datatable$at_fault.binary, datatable$adult_yes_no)
+table(datatable$at_fault.binary, datatable$serious_fatal_injury)
+chisq.test(datatable$at_fault.binary, datatable$serious_fatal_injury)
+table(datatable$at_fault.binary, datatable$hit_run)
+chisq.test(datatable$at_fault.binary, datatable$hit_run)
+# Model 1: with transportation mode (pedestrian yes/no)
+Model <- glm(at_fault.binary ~ day_night + on_offroad + pedestrian_yes_no + adult_yes_no + serious_fatal_injury + hit_run, data = datatable, family = binomial(link='logit'))
+summary(Model)
+confint(Model)
+# Model 2: without transportation mode (pedestrian yes/no)
+Model2 <- glm(at_fault.binary ~ day_night + on_offroad + adult_yes_no + serious_fatal_injury + hit_run, data = datatable, family = binomial(link='logit'))
+summary(Model2)
+confint(Model2)
+# Check for goodness of fit for both models
+Modeldata <- model.frame(Model)
+Model2data <- model.frame(Model2)
+logitgof(Modeldata$at_fault.binary, fitted(Model))
+logitgof(Model2data$at_fault.binary, fitted(Model2))
+# Check for multicollinearity for both models
+check_collinearity(Model)
+check_collinearity(Model2)
+```
+
+
+
+
+
+
+### CHARTS
+
+```{r}
+#barplot(table(crashdata$SFOrNot), xlab = "Not serious/fatal vs. serious/fatal injury", ylab = "Number", ylim = c(0, 500))
+#barplot(table(crashdata$CarOrNot), ylab = "Number", ylim = c(0, 500))
+#barplot(table(crashdata$DayOrNotDay), ylab = "Number", ylim = c(0, 500))
+#barplot(table(crashdata$Clothing), ylab = "Number", ylim = c(0, 500))
+#boxplot(crashdata$SpeedLimit ~ crashdata$SFOrNot, xlab = "Not serious/fatal vs. serious/fatal", ylab = "speed limit (mph)")
+#wilcox.test(SpeedLimit ~ SFOrNot, data = crashdata)
+#summary(crashdata$SpeedLimit, crashdata$SFOrNot)
+```
+
+
+
+### EXTRA STUFF
+
+```{r}
+#boxplot(crashdata$SpeedLimit ~ crashdata$OnOffRoad)
+#table(crashdata$HitRun, crashdata$OnOffRoad)
+```
