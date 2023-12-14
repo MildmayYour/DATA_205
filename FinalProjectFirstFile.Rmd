@@ -1,0 +1,508 @@
+---
+title: "FinalProject Data 205 file 1"
+author: "Miriam Schoenbaum"
+date: "`r Sys.Date()`"
+output: openintro::lab_report
+---
+
+# Load packages
+
+```{r load-packages, message=FALSE}
+library(tidyverse)
+library(data.table)
+library(naniar)
+library(lubridate)
+library(chron)
+library(generalhoslem)
+library(performance)
+```
+
+# Check timezone
+
+```{r}
+Sys.timezone()
+```
+
+# Load data
+```{r}
+# Data Montgomery
+nonmotorist <- fread('https://data.montgomerycountymd.gov/resource/n7fk-dce5.csv?$limit=10000')
+incident <- fread('https://data.montgomerycountymd.gov/resource/bhju-22kf.csv?$limit=150000')
+```
+
+```{r}
+# Maryland State Police
+# Data available at https://mdsp.maryland.gov/Pages/Dashboards/CrashDataDownload.aspx
+# Steps for getting the file:
+# Selection parameters: Crash Date Begin 1/1/2018, County of Crash Montgomery, remainder on default
+# Download data
+# NONMOTORIST data
+# Include default columns (ReportNumber, NonMotoristID) plus NonMotoristDOB and NonMotoristSex
+# save in working directory as the default file download name "CrashMap_NONMOTORIST_data.csv"
+setwd("C:/Data_205/project_files")
+MSP <- read.csv('CrashMap_NONMOTORIST_data.csv')
+```
+
+# Wrangle the MSP data
+
+```{r}
+# Change non-motorist sex from character to factor & convert unknown to NA
+MSP$NonMotoristSex <- as.factor(MSP$NonMotoristSex)
+MSP <- MSP |>
+  mutate(NonMotoristSex = case_when(
+    NonMotoristSex == "U" ~ NA,
+    NonMotoristSex == "M" ~ "M",
+    .default = "F"
+  ))
+table(MSP$NonMotoristSex)
+# Change non-motorist date of birth from character to date
+MSP$NonMotoristDOB <- as.Date(MSP$NonMotoristDOB,"%m/%d/%Y")
+# Change small letters in NonmotoristID to capital letters
+MSP$NonMotoristID <- toupper(MSP$NonMotoristID)
+```
+
+# Wrangle the nonmotorist data
+
+```{r}
+# Change a lot of variables from character to factor and order factors as needed
+nonmotorist$agency_name <- as.factor(nonmotorist$agency_name)
+nonmotorist$acrs_report_type <- as.factor(nonmotorist$acrs_report_type)
+nonmotorist$route_type <- as.factor(nonmotorist$route_type)
+nonmotorist$cross_street_type <- as.factor(nonmotorist$cross_street_type)
+nonmotorist$municipality <- as.factor(nonmotorist$municipality)
+nonmotorist$related_non_motorist <- as.factor(nonmotorist$related_non_motorist)
+nonmotorist$collision_type <- as.factor(nonmotorist$collision_type)
+nonmotorist$weather <- as.factor(nonmotorist$weather)
+nonmotorist$surface_condition <- as.factor(nonmotorist$surface_condition)
+nonmotorist$light <- as.factor(nonmotorist$light)
+nonmotorist$traffic_control <- as.factor(nonmotorist$traffic_control)
+nonmotorist$pedestrian_type <- as.factor(nonmotorist$pedestrian_type)
+nonmotorist$pedestrian_movement <- as.factor(nonmotorist$pedestrian_movement)
+nonmotorist$pedestrian_actions <- as.factor(nonmotorist$pedestrian_actions)
+nonmotorist$pedestrian_location <- as.factor(nonmotorist$pedestrian_location)
+nonmotorist$pedestrian_obeyed_traffic_signal <- as.factor(nonmotorist$pedestrian_obeyed_traffic_signal)
+nonmotorist$pedestrian_visibility <- as.factor(nonmotorist$pedestrian_visibility)
+nonmotorist$at_fault <- as.factor(nonmotorist$at_fault)
+nonmotorist$injury_severity <- as.factor(nonmotorist$injury_severity)
+nonmotorist$injury_severity <- factor(nonmotorist$injury_severity, ordered = TRUE, levels = c("NO APPARENT INJURY", "POSSIBLE INJURY", "SUSPECTED MINOR INJURY", "SUSPECTED SERIOUS INJURY", "FATAL INJURY"))
+# Create date variable for calculating age
+nonmotorist <- nonmotorist |>
+  mutate(crashdate = as.Date(nonmotorist$crash_date_time,"%m/%d/%Y", tz = ''))
+# Create year variable
+nonmotorist <- nonmotorist |>
+  mutate(year = as.numeric((format(nonmotorist$crashdate,"%Y"))))
+# Create on/off road variable
+nonmotorist <- nonmotorist |>
+  replace_with_na(replace = list(off_road_description = "")) |>
+  mutate(on_offroad = if_else(is.na(off_road_description), "On road", "Off road"))
+nonmotorist$on_offroad <- as.factor(nonmotorist$on_offroad)
+# Create serious/fatal injury variable
+nonmotorist <- nonmotorist |>
+  mutate(serious_fatal_injury = case_when(
+    injury_severity == "FATAL INJURY" ~ "serious/fatal",
+    injury_severity == "SUSPECTED SERIOUS INJURY" ~ "serious/fatal",
+    .default = "not serious/fatal"
+  ))
+nonmotorist$serious_fatal_injury <- as.factor(nonmotorist$serious_fatal_injury)
+# Create a day/night variable (day = 7 am to 9 pm, night = 9 pm to 7 am, based on the times for non-motorist crashes in school walk zones in the Safe Streets Act)
+nonmotorist <- nonmotorist |>
+  mutate(crashtime = format(as.POSIXct(crash_date_time),format = "%H:%M:%S"))
+nonmotorist$crashtime <- times(nonmotorist$crashtime)
+nonmotorist <- nonmotorist |>
+  mutate(day_night = case_when(
+    crashtime >= "07:00:00" & crashtime < "21:00:00" ~ "day",
+    .default = "night"
+  ))
+nonmotorist$day_night <- as.factor(nonmotorist$day_night)
+# Create month variable and seasonality variable
+nonmotorist <- nonmotorist |>
+  mutate(month = month(crash_date_time))
+nonmotorist <- nonmotorist |> 
+  mutate(season = case_when (
+    month == "12" | month == "1" | month == "2" ~ "winter",
+    month == "3" | month == "4" | month == "5" ~ "spring",
+    month == "6" | month == "7" | month == "8" ~ "summer",
+    .default = "fall"
+  ))
+nonmotorist$season <- factor(nonmotorist$season, ordered = TRUE, levels = c("winter", "spring", "summer", "fall"))
+# Create "dart dash" variable
+nonmotorist <- nonmotorist |>
+  mutate(dartdash = if_else(pedestrian_actions == "DART DASH", "dart dash", "not dart dash"))
+nonmotorist$dartdash <- as.factor(nonmotorist$dartdash)
+# Create pedestrian/non-pedestrian variable
+nonmotorist <- nonmotorist |>
+  mutate(pedestrian_yes_no = ifelse(pedestrian_type == "PEDESTRIAN", "pedestrian", "small wheeled thing"))
+nonmotorist$pedestrian_yes_no <- as.factor(nonmotorist$pedestrian_yes_no)
+# Create binary at-fault variable
+nonmotorist <- nonmotorist |>
+  mutate(at_fault.binary = ifelse(at_fault == "No", "Not at fault", "At fault or unknown"))
+nonmotorist$at_fault.binary <- as.factor(nonmotorist$at_fault.binary)
+# Create variables for day of the week and weekday/weekend
+nonmotorist <- nonmotorist |>
+  mutate(weekday.day = weekdays.POSIXt(crash_date_time)) |>
+  mutate(weekdays_y_n = case_when(
+    weekday.day == "Sunday" ~ "weekend",
+    weekday.day == "Saturday" ~ "weekend",
+    .default = "weekday"))
+nonmotorist$weekday.day <- factor(nonmotorist$weekday.day, ordered = TRUE, levels = c("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"))
+nonmotorist$weekdays_y_n <- factor(nonmotorist$weekdays_y_n)
+# Create variable for county road
+nonmotorist <- nonmotorist |>
+  mutate(county_road = if_else(route_type == "County" | cross_street_type == "County", "County", "Not county"))
+nonmotorist$county_road = as.factor(nonmotorist$county_road)
+```
+
+
+# Wrangle the incident data
+
+```{r}
+# Change chosen variables from character to factor
+incident$hit_run <- as.factor(incident$hit_run)
+incident$nontraffic <- as.factor(incident$nontraffic)
+incident$junction <- as.factor(incident$junction)
+```
+
+# Start the main data table by adding the incident fields to the non-motorist table
+
+```{r}
+# Join tables
+datatable <- left_join(nonmotorist, incident, by = join_by(report_number == report_number), relationship = "many-to-one")
+# drop duplicate variables
+datatable <- datatable |>
+  dplyr::select(-ends_with(".y")) 
+```
+
+# Add the MSP fields to the main data table
+
+```{r}
+datatable <- left_join(datatable, MSP, by = join_by(person_id == NonMotoristID))
+```
+
+# Drop 2015, 2016, 2017 from the main data table because the MSP data start in 2018
+
+```{r}
+datatable <- subset(datatable, year > 2017)
+```
+
+# Create age field
+
+```{r}
+datatable <- datatable |>
+  mutate(age = (crashdate - NonMotoristDOB)/365)
+datatable$age <- as.integer(datatable$age)
+```
+
+# Create 2 age category fields
+
+```{r}
+# Create binary age variable
+datatable <- datatable |>
+  mutate(adult_yes_no = if_else((age < 19), "Not adult", "Adult"))
+datatable$adult_yes_no <- as.factor(datatable$adult_yes_no)
+# Create age group field
+datatable <- datatable |>
+  mutate(agegroup = case_when(
+    age >= 0 & age < 5 ~ "0 to 4",
+    age >= 5 & age <12 ~ "5 to 11",
+    age >= 12 & age <15 ~ "12 to 14",
+    age >= 15 & age <19 ~ "15 to 18",
+    .default = "19+"
+  ))
+datatable$agegroup <- as.factor(datatable$agegroup)
+datatable$agegroup <- factor(datatable$agegroup, ordered = TRUE, levels = c("0 to 4", "5 to 11", "12 to 14", "15 to 18", "19+"))
+```
+
+# Look at age group and adult/non-adult
+
+```{r}
+table(datatable$agegroup)
+table(datatable$adult_yes_no)
+hist(datatable$age, main = "Age (years) of non-motorists in police-reported crashes", xlab = "Years", ylab = "Number of non-motorists since 2018", col = "lightblue", breaks = 120) 
+pie(table(datatable$agegroup), main = "Non-motorists by age group in police-reported crashes", col = c("white", "lightblue", "blue", "darkblue", "red"))
+```
+
+# Time variables
+
+```{r}
+table(datatable$year, datatable$agegroup)
+table(datatable$year, datatable$adult_yes_no)
+table(datatable$month, datatable$agegroup)
+table(datatable$month, datatable$adult_yes_no)
+table(datatable$season, datatable$agegroup)
+table(datatable$season, datatable$adult_yes_no)
+table(datatable$day_night, datatable$agegroup)
+table(datatable$weekday.day, datatable$agegroup)
+# Odds ratio for day or night
+day_night_table <- table(datatable$day_night, datatable$adult_yes_no)
+day_night_table
+mosaicplot(day_night_table, color = c("red", "blue"), xlab ="Day or night", ylab = "Adult or not adult", main = "Adult/Not adult and Day/Night")
+fisher.test(day_night_table)
+# Odds ratio for weekday or weekend
+weekday_table<- table(datatable$weekdays_y_n, datatable$adult_yes_no)
+weekday_table
+mosaicplot(weekday_table, color = c("red", "blue"), xlab = "Weekday or weekend", ylab = "Adult or not adult", main = "Adult/Not adult and Weekday/Weekend")
+fisher.test(weekday_table)
+```
+
+# Charts for time
+
+```{r}
+datatable$month_year <- format(as.Date(datatable$crash_date_time.x), "%Y-%m")
+seasonal_age <- datatable |>
+  count(month_year, agegroup)
+# by age group
+plot1 <- ggplot(seasonal_age, aes(x = month_year, y = n, group = agegroup, color = agegroup)) +
+ # make it a line plot
+  geom_line(linewidth = 0.5) +
+ # add points
+  geom_point() +
+  #set the x axis scale and labels
+  scale_x_discrete(breaks = c("2018-01", "2019-01", "2020-01", "2021-01", "2022-01", "2023-01")) +
+  #set the title
+  ggtitle(label = "Non-motorists with police crash reports, by age group", subtitle = "By month, January 2018-present") +
+  # set the label for the x axis
+  xlab("Year-Month") +
+# set the label for the y axis
+  ylab("Number of non-motorists") +
+# set the label for the legend
+  labs(color = "Age group") + 
+  # set the colors for the age groups 
+  scale_color_manual(values = c("dodgerblue4", "dodgerblue3", "dodgerblue2", "dodgerblue", "firebrick1"))
+plot1
+# by age group
+seasonal_age <- datatable |>
+  count(month_year, agegroup)
+plot1 <- ggplot(seasonal_age, aes(x = month_year, y = n, group = agegroup, color = agegroup)) +
+ # make it a line plot
+  geom_line(linewidth = 0.5) +
+ # add points
+  geom_point() +
+  #set the x axis scale and labels
+  scale_x_discrete(breaks = c("2018-01", "2019-01", "2020-01", "2021-01", "2022-01", "2023-01")) +
+  #set the title
+  ggtitle(label = "Non-motorists with police crash reports, by age group", subtitle = "By month, January 2018-present") +
+  # set the label for the x axis
+  xlab("Year-Month") +
+# set the label for the y axis
+  ylab("Number of non-motorists") +
+# set the label for the legend
+  labs(color = "Age group") + 
+  # set the colors for the age groups 
+  scale_color_manual(values = c("dodgerblue4", "dodgerblue3", "dodgerblue2", "dodgerblue", "firebrick1"))
+plot1
+# by adult/non-adult
+seasonal_adult_nonadult <- datatable |>
+  count(month_year, adult_yes_no)
+seasonal_adult_nonadult <- na.omit(seasonal_adult_nonadult)
+plot2 <- ggplot(seasonal_adult_nonadult, aes(x = month_year, y = n, group = adult_yes_no, color = adult_yes_no)) +
+ # make it a line plot
+  geom_line(linewidth = 0.5) +
+ # add points
+  geom_point() +
+  #set the x axis scale and labels
+  scale_x_discrete(breaks = c("2018-01", "2019-01", "2020-01", "2021-01", "2022-01", "2023-01")) +
+  #set the title
+  ggtitle(label = "Non-motorists with police crash reports, by adult (19+) or non-adult", subtitle = "By month, January 2018-present") +
+  # set the label for the x axis
+  xlab("Year-Month") +
+# set the label for the y axis
+  ylab("Number of non-motorists") +
+# set the label for the legend
+  labs(color = "Adult or non-adult") +
+  # set the colors for the age groups 
+  scale_color_manual(values = c("firebrick1", "dodgerblue4"))
+plot2
+# without adults
+kids_seasonal_age <- subset(seasonal_age, agegroup != "19+")
+plot3 <- ggplot(kids_seasonal_age, aes(x = month_year, y = n, group = agegroup, color = agegroup)) +
+ # make it a line plot
+  geom_line(linewidth = 0.5) +
+ # add points
+  geom_point() +
+  #set the x axis scale and labels
+  scale_x_discrete(breaks = c("2018-01", "2019-01", "2020-01", "2021-01", "2022-01", "2023-01")) +
+  #set the title
+  ggtitle(label = "Non-motorists with police crash reports, by age group for non-adults (<19)", subtitle = "By month, January 2018-present") +
+  # set the label for the x axis
+  xlab("Year-Month") +
+# set the label for the y axis
+  ylab("Number of non-motorists") +
+# set the label for the legend
+  labs(color = "Age group for non-adults") +
+  # set the colors for the age groups 
+  scale_color_manual(values = c("skyblue", "blue", "red", "darkred"))
+plot3
+```
+
+# Roads variables
+
+```{r}
+table(datatable$number_of_lanes, datatable$agegroup)
+table(datatable$number_of_lanes, datatable$adult_yes_no)
+table(datatable$on_offroad, datatable$agegroup)
+on_offroad_table <- table(datatable$on_offroad, datatable$adult_yes_no)
+on_offroad_table
+# Odds ratio for on or off road
+mosaicplot(on_offroad_table, color = c("red", "blue"), xlab ="On or off road", ylab = "Adult or not adult", main = "Adult/Not adult and On road/Off road")
+fisher.test(on_offroad_table)
+#Odds ratio for county or non county road
+countyroad_table <- table(datatable$county_road, datatable$adult_yes_no)
+countyroad_table
+mosaicplot(countyroad_table, color = c("red", "blue"), xlab ="County or non county road", ylab = "Adult or not adult", main = "Adult/Not adult and County or non county road")
+fisher.test(countyroad_table)
+```
+
+# Crash variables
+
+```{r}
+table(datatable$serious_fatal_injury, datatable$agegroup)
+table(datatable$at_fault.binary, datatable$agegroup)
+table(datatable$dartdash, datatable$agegroup)
+table(datatable$agency_name.x, datatable$agegroup)
+table(datatable$agency_name.x, datatable$adult_yes_no)
+table(datatable$agency_name.x, datatable$at_fault.x)
+table(datatable$hit_run, datatable$agegroup)
+# Odds ratio for serious or fatal injury
+serious_fatal_table <- table(datatable$serious_fatal_injury, datatable$adult_yes_no)
+serious_fatal_table
+mosaicplot(serious_fatal_table, color = c("red", "blue"), xlab ="Serious/fatal or not serious/fatal injury", ylab = "Adult or not adult", main = "Adult/Not adult and Serious/fatal or Not serious/fatal injury")
+fisher.test((serious_fatal_table))
+# Odds ratio for at fault
+at_fault_table <- table(datatable$at_fault.binary, datatable$adult_yes_no)
+at_fault_table
+mosaicplot(at_fault_table, color = c("red", "blue"), xlab ="At fault or unknown/Not at fault", ylab = "Not adult/Adult", main = "Not adult/Adult and At fault or unknown/Not at fault")
+fisher.test(at_fault_table)
+# Odds ratio for "dart dash"
+dartdash_table <- table(datatable$dartdash, datatable$adult_yes_no)
+dartdash_table
+mosaicplot(dartdash_table, color = c("red", "blue"), xlab ="'Dart dash' or other action", ylab = "Adult or not adult", main = "Adult/Not adult and 'Dart dash'/Other action")
+fisher.test(dartdash_table)
+# Odds ratio for hit & run
+hit_run_table <- table(datatable$hit_run, datatable$adult_yes_no)
+hit_run_table
+mosaicplot(hit_run_table, color = c("red", "blue"), xlab ="Hit & run or not hit & run", ylab = "Adult or not adult", main = "Adult/Not adult and Hit & run/Not hit & run")
+fisher.test(hit_run_table)
+```
+
+# Extra analysis for non-motorists at fault who were hit in a sidewalk or crosswalk and didn't disobey the signal
+```{r}
+# Create dataset for in crosswalk or on sidewalk 
+crossorsidewalk <- filter(datatable, pedestrian_location == "AT INTERSECTION BUT NO CROSSWALK" | pedestrian_location == "AT INTERSECTION MARKED CROSSWALK" | pedestrian_location == "DRIVEWAY ACCESS MARKED CROSSWALK" | pedestrian_location == "MIDBLOCK MARKED CROSSWALK" | pedestrian_location == "ON ROADWAY AT CROSSWALK" | pedestrian_location == "SHARED USE PATH OR TRAILS" | pedestrian_location == "SIDEWALK")
+crossorsidewalk_table <- table(crossorsidewalk$at_fault.binary, crossorsidewalk$adult_yes_no)
+crossorsidewalk_table
+mosaicplot(crossorsidewalk_table, color = c("red", "blue"), xlab ="At fault or unknown/Not at fault", ylab = "Not adult/Adult", main = "For nonmotorists hit in crosswalks or on sidewalks:\n Not adult/Adult and At fault or unknown/Not at fault")
+fisher.test(crossorsidewalk_table)
+crosswalk_did_not_disobey <- filter(crossorsidewalk, pedestrian_obeyed_traffic_signal != "DISOBEYED PED. SIGNAL")
+didnotdisobeytable <- table(crosswalk_did_not_disobey$at_fault.binary, crosswalk_did_not_disobey$adult_yes_no)
+didnotdisobeytable
+mosaicplot(didnotdisobeytable, color = c("red", "blue"), xlab ="At fault or unknown/Not at fault", ylab = "Not adult/Adult", main = "For nonmotorists hit in crosswalks or on sidewalks, \n who did not disobey a signal: \n Not adult/Adult and At fault or unknown/Not at fault")
+fisher.test(didnotdisobeytable)
+```
+
+
+# Transportation mode variables
+
+```{r}
+table(datatable$pedestrian_type, datatable$agegroup)
+table(datatable$pedestrian_type, datatable$adult_yes_no)
+table(datatable$pedestrian_yes_no, datatable$agegroup)
+pedestrian_table <- table(datatable$pedestrian_yes_no, datatable$adult_yes_no)
+pedestrian_table
+mosaicplot(pedestrian_table, color = c("red", "blue"), xlab ="Pedestrian or Small thing with wheels", ylab = "Adult or not adult", main = "Adult/Not adult and Pedestrian/Small thing with wheels")
+fisher.test(pedestrian_table)
+```
+
+# Gender (wrangled to binary) variables
+```{r}
+table(datatable$NonMotoristSex, datatable$agegroup)
+table(datatable$NonMotoristSex, datatable$adult_yes_no)
+gender_table <- table(datatable$NonMotoristSex, datatable$adult_yes_no)
+mosaicplot(gender_table, color = c("red", "blue"), xlab ="Male or Female", ylab = "Adult or not adult", main = "Adult/Not adult and Male or Female")
+fisher.test(gender_table)
+```
+
+
+# Chi squared tests to assess significant relationships
+
+```{r}
+# Time
+# Year - adult yes/no
+chisq.test(datatable$year, datatable$adult_yes_no)
+# Month - adult yes/no
+chisq.test(datatable$month, datatable$adult_yes_no)
+# Season - adult yes/no
+chisq.test(datatable$season, datatable$adult_yes_no)
+# Day/night - adult yes/no
+chisq.test(datatable$day_night, datatable$adult_yes_no)
+# Weekday/weekend - adult yes/no
+chisq.test(datatable$weekdays_y_n, datatable$adult_yes_no)
+# Road
+# On or off road - adult yes/no
+chisq.test(datatable$on_offroad, datatable$adult_yes_no)
+# County or non county road - adult yes/no
+chisq.test(datatable$county_road, datatable$adult_yes_no)
+# Crash
+# Serious or fatal
+chisq.test(datatable$serious_fatal_injury, datatable$adult_yes_no)
+# At fault
+chisq.test(datatable$at_fault.x, datatable$adult_yes_no)
+# Dart dash
+chisq.test(datatable$dartdash, datatable$adult_yes_no)
+# Mode
+chisq.test(datatable$pedestrian_yes_no, datatable$adult_yes_no)
+# Gender
+chisq.test(datatable$NonMotoristSex, datatable$adult_yes_no)
+```
+
+# Logistic regression model for non-motorist at fault
+
+```{r}
+# Look at the variables separately for collinearity
+table(datatable$at_fault.binary, datatable$day_night)
+chisq.test(datatable$at_fault.binary, datatable$day_night)
+table(datatable$at_fault.binary, datatable$on_offroad)
+chisq.test(datatable$at_fault.binary, datatable$on_offroad)
+table(datatable$at_fault.binary, datatable$county_road)
+chisq.test(datatable$at_fault.binary, datatable$county_road)
+table(datatable$at_fault.binary,datatable$pedestrian_yes_no)
+chisq.test(datatable$at_fault.binary,datatable$pedestrian_yes_no)
+table(datatable$at_fault.binary, datatable$adult_yes_no)
+chisq.test(datatable$at_fault.binary, datatable$adult_yes_no)
+table(datatable$at_fault.binary, datatable$serious_fatal_injury)
+chisq.test(datatable$at_fault.binary, datatable$serious_fatal_injury)
+table(datatable$at_fault.binary, datatable$hit_run)
+chisq.test(datatable$at_fault.binary, datatable$hit_run)
+table(datatable$at_fault.binary, datatable$NonMotoristSex)
+chisq.test(datatable$at_fault.binary, datatable$NonMotoristSex)
+table(datatable$at_fault.binary, datatable$weekdays_y_n)
+chisq.test(datatable$at_fault.binary, datatable$weekdays_y_n)
+# Model 1: with transportation mode (pedestrian yes/no)
+Model <- glm(at_fault.binary ~ day_night + on_offroad + pedestrian_yes_no + adult_yes_no + serious_fatal_injury + hit_run + NonMotoristSex, data = datatable, family = binomial(link='logit'))
+summary(Model)
+confint(Model)
+# Model 2: without transportation mode (pedestrian yes/no)
+Model2 <- glm(at_fault.binary ~ day_night + on_offroad + adult_yes_no + serious_fatal_injury + hit_run + NonMotoristSex, data = datatable, family = binomial(link='logit'))
+summary(Model2)
+confint(Model2)
+# Check for goodness of fit for both models
+Modeldata <- model.frame(Model)
+Model2data <- model.frame(Model2)
+logitgof(Modeldata$at_fault.binary, fitted(Model))
+logitgof(Model2data$at_fault.binary, fitted(Model2))
+# Check for multicollinearity for both models
+check_collinearity(Model)
+check_collinearity(Model2)
+```
+
+# Make a file for just crashes on county roads
+```{r}
+countydatatable <- filter(datatable, county_road == "County")
+```
+
+# Export csv file for geospatial analysis in ArcGIS Pro
+```{r}
+write.csv(datatable, "C:/Data_205/project_files/GISfile/datatable.csv", row.names=FALSE)
+```
+
+
+

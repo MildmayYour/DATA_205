@@ -1,0 +1,62 @@
+---
+title: "FinalProjectwebscrape"
+author: "Miriam Schoenbaum"
+date: "2023-12-4"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Load packages
+
+```{r load-packages, message=FALSE}
+library(tidyverse)
+library(httr2)
+library(jsonlite)
+library(netstat)
+library(RSelenium)
+library(seleniumPipes)
+library(wdman)
+library(rvest)
+```
+
+# Set up R Selenium driver using https://www.youtube.com/watch?v=GnpJujF9dBw
+# Java must be installed
+```{r}
+selenium()
+```
+```{r}
+selenium_object <- selenium(retcommand = T, check = F)
+selenium_object
+```
+
+# Set up the remote driver
+```{r}
+remote_driver <- rsDriver(browser = "firefox", version = "latest", chromever = NULL, verbose = F, port = free_port())
+```
+
+
+# Point the remote driver at a web page
+```{r}
+remDR <- remote_driver$client
+remDR$open()
+remDR$navigate("https://mdsp.maryland.gov/Pages/Dashboards/CrashDataDownload.aspx")
+remDR$maxWindowSize()
+```
+
+# Scraping the data from the website using https://joshuamccrain.com/tutorials/web_scraping_R_selenium.html - this is the part that I couldn't get to work
+
+```{r}
+startdate <- c("1-1-2018")
+startdate <- as_date(startdate, format="%m-%d-%Y")
+remDR$findElement(using = "id", value = "typein_[Parameters].[Parameter 1]")$sendKeysToElement(list(startdate))
+```
+
+# Turn off the remote driver
+```{r}
+remote_driver$server$stop
+```
+
+

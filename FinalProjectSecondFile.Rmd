@@ -1,0 +1,137 @@
+---
+title: "FinalProject Data 205 file 2"
+author: "Miriam Schoenbaum"
+date: "2023-11-09"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+# Load packages
+
+```{r load-packages, message=FALSE}
+library(tidyverse)
+library(data.table)
+library(naniar)
+library(lubridate)
+library(chron)
+library(generalhoslem)
+library(performance)
+```
+
+# Read in output file from the spatial analysis in ArcGIS Pro
+```{r}
+setwd("C:/Data_205/project_files")
+outputtable <- read.csv('outputfile.csv')
+```
+
+# Wrangle the output file with spatial data
+```{r}
+# Rename the 3 variables (bus stop, walk zone, school zone)
+outputtable <- dplyr::rename(outputtable, schoolzone = Join_Count, walkzone = Join_Count_1, busstop = COUNT)
+# Replace blanks in bus stop variable with 0
+outputtable <- outputtable |>
+  mutate(busstop = replace_na(busstop, 0))
+# Clean up other variable names
+outputtable <- dplyr::rename(outputtable, agency_name = agency_name_x, crash_date_time = crash_date_time_x, road_name = road_name_x, cross_street_name = cross_street_name_x, off_road_description = off_road_description_x, latitude = latitude_x, longitude = longitude_x)
+```
+
+# Wrangle the 3 spatial variables (walk zone, bus stop, school zone)
+```{r}
+outputtable <- outputtable|>
+  mutate(walkzone = if_else(walkzone != "0", "yes", "no")) 
+outputtable <- outputtable|>
+  mutate(busstop = if_else(busstop == "7270", "yes", "no")) 
+outputtable <- outputtable|>
+  mutate(schoolzone = if_else(schoolzone != "0", "yes", "no"))
+outputtable$walkzone <- as.factor(outputtable$walkzone)
+outputtable$busstop <- as.factor(outputtable$busstop)
+outputtable$schoolzone <- as.factor(outputtable$schoolzone)
+```
+
+# Drop the "target FID" variables for clean-up
+```{r}
+outputtable <- outputtable |>
+  dplyr::select(-TARGET_FID, -TARGET_FID_1)
+```
+
+# Compare walk zones, bus stops, and school zones for adults/non-adults
+```{r}
+walkzones_table <- table(outputtable$walkzone, outputtable$adult_yes_no)
+walkzones_table
+fisher.test((walkzones_table))
+mosaicplot(walkzones_table, color = c("red", "blue"), xlab ="Walk zones", ylab = "Adult or not adult", main = "Adult/Not adult and walk zones")
+busstops_table <- table(outputtable$busstop, outputtable$adult_yes_no)
+busstops_table
+fisher.test(busstops_table)
+mosaicplot(busstops_table, color = c("red", "blue"), xlab ="School bus stops (200 ft radius)", ylab = "Adult or not adult", main = "Adult/Not adult and within 200 ft of a school bus stop")
+schoolzones_table <- table(outputtable$schoolzone, outputtable$adult_yes_no)
+schoolzones_table
+mosaicplot(schoolzones_table, color = c("red", "blue"), xlab ="School zone", ylab = "Adult or not adult", main = "Adult/Not adult and school zone")
+fisher.test(schoolzones_table)
+```
+
+# Create walk zone identifier variable (walkzone = yes, day_night = day, weekdays_y_n = weekday, county road = "County")
+```{r}
+outputtable <- outputtable |>
+  mutate(walkzone_SRTS = if_else(walkzone == "yes" & day_night == "day" & weekdays_y_n == "weekday" & county_road == "County", "yes", "no"))
+table(outputtable$walkzone, outputtable$walkzone_SRTS)
+```
+
+# Create bus stop identifier variable (busstop = yes, day_night = day, weekdays_y_n = weekday, adult_yes_no = Not adult)
+```{r}
+outputtable <- outputtable |>
+  mutate(busstop_SRTS = if_else(busstop == "yes" & day_night == "day" & weekdays_y_n == "weekday" & adult_yes_no == "Not adult", "yes", "no" ))
+table(outputtable$busstop, outputtable$busstop_SRTS)
+```
+
+# Create Safe Routes To School case identifier variable
+```{r}
+outputtable <- outputtable |>
+  mutate(SRTScase = if_else(busstop_SRTS == "yes" | walkzone_SRTS == "yes" | schoolzone == "yes", "yes", "no"))
+table(outputtable$SRTScase, outputtable$year)
+outputtable2023 <- outputtable |>
+  filter(year == 2023)
+SRTStable <- table(outputtable$SRTScase, outputtable$adult_yes_no)
+SRTStable
+mosaicplot(SRTStable, color = c("red", "blue"), xlab ="Safe Routes to School crash", ylab = "Adult or not adult", main = "Adult/Not adult and SRTS crash")
+```
+
+# Look at county vs not county road
+```{r}
+table(outputtable$SRTScase, outputtable$county_road)
+table(outputtable$busstop_SRTS, outputtable$county_road)
+table(outputtable$walkzone_SRTS, outputtable$county_road)
+table(outputtable$schoolzone, outputtable$county_road)
+```
+
+
+# Create Safe Routes To School crash dataset with relevant accompanying variables
+```{r}
+SRTStable <- outputtable |>
+  filter(SRTScase == "yes") |>
+  dplyr::select(report_number, agency_name, crash_date_time, road_name, cross_street_name, off_road_description, county_road, pedestrian_type, injury_severity, NonMotoristDOB, age, SRTScase, busstop_SRTS, walkzone_SRTS, schoolzone, county_road, year, latitude, longitude)
+```
+
+# EDA on the SRTS dataset
+```{r}
+table(SRTStable$busstop_SRTS)
+table(SRTStable$walkzone_SRTS)
+table(SRTStable$schoolzone)
+table(SRTStable$SRTScase, SRTStable$year)
+SRTStable2023 <- outputtable2023 |>
+  filter(SRTScase == "yes") |>
+  dplyr::select(report_number, agency_name, crash_date_time, road_name, cross_street_name, off_road_description, county_road, pedestrian_type, injury_severity, NonMotoristDOB, age, SRTScase, busstop_SRTS, walkzone_SRTS, schoolzone, county_road, year, latitude, longitude)
+table(SRTStable2023$busstop_SRTS)
+table(SRTStable2023$walkzone_SRTS)
+table(SRTStable2023$schoolzone)
+```
+
+# Export the SRTS output file 
+```{r}
+write.csv(SRTStable, "C:/Data_205/project_files/SRTStable.csv", row.names=FALSE)
+```
+
