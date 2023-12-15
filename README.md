@@ -34,8 +34,10 @@ Final and data story.pdf: the final PowerPoint presentation and data story
 
 Final Report.docx: the written final report
 
+CrashMap_NONMOTORIST_data.csv: the Maryland State Police crash data download for input into the first R Markdown file, downloaded on 12/15/2023
+
 datatable.csv: the first output file (using data from the 12/8/2023 Data Montgomery update)
 
-outputfile.csv: the second output file (after the geospatial processing)
+outputfile.csv: the second output file, after the geospatial processing (based on the datatable.csv that used data from the 12/8/2023 Data Montgomery update)
 
 SRTStable.csv: the table listing potential Safe Routes to School crashes identified by the analysis
